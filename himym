@@ -1,0 +1,211 @@
+#!/usr/bin/env python3
+
+# You have to generate ssh key in PEM format
+#
+#   $ ssh-keygen -t rsa -b 4096 -m PEM
+
+import logging
+import os
+import paramiko
+import re
+import stat
+import subprocess
+import threading
+import tkinter
+
+from functools import partial
+
+import settings
+
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger("HIMYM")
+
+class GUI:
+    VIDEO_EXTENSIONS = [
+            "webm",
+            "mkv",
+            "flv",
+            "flv",
+            "vob",
+            "ogv",
+            "ogg",
+            "drc",
+            "gif",
+            "gifv",
+            "mng",
+            "avi",
+            "mts",
+            "m2ts",
+            "ts",
+            "mov",
+            "qt",
+            "wmv",
+            "yuv",
+            "rm",
+            "rmvb",
+            "asf",
+            "amv",
+            "mp4",
+            "m4p",
+            "m4v",
+            "mpg",
+            "mp2",
+            "mpeg",
+            "mpe",
+            "mpv",
+            "mpg",
+            "mpeg",
+            "m2v",
+            "m4v",
+            "svi",
+            "3gp",
+            "3g2",
+            "mxf",
+            "roq",
+            "nsv",
+            "flv",
+            "f4v",
+            "f4p",
+            "f4a",
+            "f4b",
+            ]
+
+    class SFTPClientWrapper:
+        def __init__(self, host, port, user):
+            self.host = host
+            self.port = port
+            self.user = user
+
+            self.ssh_client = None
+            self.sftp_client = None
+
+        def __enter__(self):
+            log.info("Opening connection")
+            self.ssh_client = paramiko.SSHClient()
+            self.ssh_client.load_system_host_keys()
+            self.ssh_client.connect(self.host, self.port, self.user)
+            transport = self.ssh_client.get_transport()
+            self.sftp_client = paramiko.SFTPClient.from_transport(transport)
+
+            return self.sftp_client
+
+        def __exit__(self, exc_type, exc_value, exc_traceback):
+            log.info("Closing connections")
+            self.ssh_client.close()
+
+    def __init__(self):
+        self.window = tkinter.Tk(className="HIMYM")
+        self.window.title("HIMYM")
+        self.window.grid_columnconfigure(0, weight=1)
+        self.window.grid_columnconfigure(1, weight=1)
+        self.window.grid_rowconfigure(0, weight=1)
+        self.window.bind("r", lambda _: self.on_update())
+
+        self.video_list = tkinter.Listbox(self.window)
+        self.video_list.grid(column=0, columnspan=2, row=0, sticky="nesw")
+        self.video_list.bind("<Return>", lambda _: self.on_play())
+        self.video_list.focus_set()
+
+        self.play_button = tkinter.Button(self.window, text="Play", command=self.on_play)
+        self.play_button.grid(column=0, row=1)
+
+        self.update_button = tkinter.Button(self.window, text="Update", command=self.on_update)
+        self.update_button.grid(column=1, row=1)
+
+        self.security_hash = None
+
+        self.lock = threading.RLock()
+
+    def update_security_hash(self, sftp_client):
+        self.security_hash = sftp_client.listdir(settings.SFTP_PATH)[0]
+        log.info("Security hash: {}".format(self.security_hash))
+
+    def get_files(self, sftp_client, path=None, relative=""):
+        if path is None:
+            path = os.path.join(settings.SFTP_PATH, self.security_hash)
+
+        for item in sorted(sftp_client.listdir_iter(path), key=lambda k: k.filename):
+            item.relative_path = os.path.join(relative, item.filename)
+            item.full_path = os.path.join(path, item.filename)
+            yield item
+
+            if stat.S_ISDIR(item.st_mode):
+                for child in self.get_files(
+                        sftp_client,
+                        os.path.join(path, item.filename),
+                        os.path.join(relative, item.filename)
+                        ):
+                    yield child
+
+    def get_file_extension(self, path):
+        return re.sub(r".*\.", "", path).lower()
+
+    def get_videos(self, sftp_client):
+        return filter(
+                lambda item: 
+                    not stat.S_ISDIR(item.st_mode) and
+                    self.get_file_extension(item.relative_path) in self.VIDEO_EXTENSIONS,
+                self.get_files(sftp_client))
+
+    def on_update(self):
+        threading.Thread(target=self.update_videos).start()
+
+    def update_videos(self):
+
+        try:
+            self.lock.acquire()
+            if self.update_button["state"] not in ("active", "normal"):
+                return
+
+            self.update_button.configure(state="disabled")
+
+        finally:
+            self.lock.release()
+
+        try:
+            with self.SFTPClientWrapper(settings.HOST, settings.PORT, settings.USER) as sftp_client:
+                self.video_list.delete(0, "end")
+
+                self.update_security_hash(sftp_client)
+
+                for item in self.get_videos(sftp_client):
+                    self.video_list.insert("end", item.relative_path)
+
+        finally:
+            self.update_button.configure(state="normal")
+
+    def on_play(self):
+        selection = self.video_list.curselection()
+        assert len(selection) <= 1
+
+        if len(selection) == 0:
+            return
+
+        selection = selection[0]
+
+        relative_path = self.video_list.get(selection)
+
+        self.play_video(relative_path)
+
+    def play_video(self, relative_path):
+        url = os.path.join(settings.BASE_URL, self.security_hash, relative_path)
+        log.info("playing {}".format(url))
+        process = subprocess.Popen(
+                list(settings.PLAYER) + [url],
+                close_fds=True,
+                preexec_fn=os.setsid
+                )
+
+    def start(self):
+        self.on_update()
+        self.window.mainloop()
+
+    def close(self):
+        pass
+
+if __name__ == "__main__":
+    gui = GUI()
+    try:
+        gui.start()
+    finally:
+        gui.close()
