@@ -99,7 +99,7 @@ class GUI:
         self.window.grid_columnconfigure(0, weight=1)
         self.window.grid_columnconfigure(1, weight=1)
         self.window.grid_rowconfigure(0, weight=1)
-        self.window.bind("r", lambda _: self.on_update())
+        self.window.bind("r", lambda _: self.on_refresh())
 
         self.video_list = tkinter.Listbox(self.window)
         self.video_list.grid(column=0, columnspan=2, row=0, sticky="nesw")
@@ -109,14 +109,14 @@ class GUI:
         self.play_button = tkinter.Button(self.window, text="Play", command=self.on_play)
         self.play_button.grid(column=0, row=1)
 
-        self.update_button = tkinter.Button(self.window, text="Update", command=self.on_update)
-        self.update_button.grid(column=1, row=1)
+        self.refresh_button = tkinter.Button(self.window, text="Refresh", command=self.on_refresh)
+        self.refresh_button.grid(column=1, row=1)
 
         self.security_hash = None
 
         self.lock = threading.RLock()
 
-    def update_security_hash(self, sftp_client):
+    def refresh_security_hash(self, sftp_client):
         self.security_hash = sftp_client.listdir(settings.SFTP_PATH)[0]
         log.info("Security hash: {}".format(self.security_hash))
 
@@ -147,17 +147,17 @@ class GUI:
                     self.get_file_extension(item.relative_path) in self.VIDEO_EXTENSIONS,
                 self.get_files(sftp_client))
 
-    def on_update(self):
-        threading.Thread(target=self.update_videos).start()
+    def on_refresh(self):
+        threading.Thread(target=self.refresh_videos).start()
 
-    def update_videos(self):
+    def refresh_videos(self):
 
         try:
             self.lock.acquire()
-            if self.update_button["state"] not in ("active", "normal"):
+            if self.refresh_button["state"] not in ("active", "normal"):
                 return
 
-            self.update_button.configure(state="disabled")
+            self.refresh_button.configure(state="disabled")
 
         finally:
             self.lock.release()
@@ -166,13 +166,13 @@ class GUI:
             with self.SFTPClientWrapper(settings.HOST, settings.PORT, settings.USER) as sftp_client:
                 self.video_list.delete(0, "end")
 
-                self.update_security_hash(sftp_client)
+                self.refresh_security_hash(sftp_client)
 
                 for item in self.get_videos(sftp_client):
                     self.video_list.insert("end", item.relative_path)
 
         finally:
-            self.update_button.configure(state="normal")
+            self.refresh_button.configure(state="normal")
 
     def on_play(self):
         selection = self.video_list.curselection()
@@ -197,7 +197,7 @@ class GUI:
                 )
 
     def start(self):
-        self.on_update()
+        self.on_refresh()
         self.window.mainloop()
 
     def close(self):
