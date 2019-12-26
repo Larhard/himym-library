@@ -98,12 +98,14 @@ class GUI:
         self.window.title("HIMYM")
         self.window.grid_columnconfigure(0, weight=1)
         self.window.grid_columnconfigure(1, weight=1)
+        self.window.grid_columnconfigure(2, weight=1)
         self.window.grid_rowconfigure(0, weight=1)
         self.window.bind("r", lambda _: self.on_refresh())
 
         self.video_list = tkinter.Listbox(self.window)
-        self.video_list.grid(column=0, columnspan=2, row=0, sticky="nesw")
+        self.video_list.grid(column=0, columnspan=3, row=0, sticky="nesw")
         self.video_list.bind("<Return>", lambda _: self.on_play())
+        self.video_list.bind("<Delete>", lambda _: self.on_delete())
         self.video_list.focus_set()
 
         self.play_button = tkinter.Button(self.window, text="Play", command=self.on_play)
@@ -111,6 +113,9 @@ class GUI:
 
         self.refresh_button = tkinter.Button(self.window, text="Refresh", command=self.on_refresh)
         self.refresh_button.grid(column=1, row=1)
+
+        self.delete_button = tkinter.Button(self.window, text="Delete", command=self.on_delete)
+        self.delete_button.grid(column=2, row=1)
 
         self.security_hash = None
 
@@ -195,6 +200,28 @@ class GUI:
                 close_fds=True,
                 preexec_fn=os.setsid
                 )
+
+    def on_delete(self):
+        selection = self.video_list.curselection()
+        assert len(selection) <= 1
+
+        if len(selection) == 0:
+            return
+
+        selection = selection[0]
+
+        relative_path = self.video_list.get(selection)
+
+        self.delete_video(relative_path)
+        self.video_list.delete(selection)
+
+    def delete_video(self, relative_path):
+        with self.SFTPClientWrapper(settings.HOST, settings.PORT, settings.USER) as sftp_client:
+            self.refresh_security_hash(sftp_client)
+
+            path = os.path.join(settings.SFTP_PATH, self.security_hash, relative_path)
+
+            sftp_client.remove(path)
 
     def start(self):
         self.on_refresh()
