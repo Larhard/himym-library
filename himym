@@ -12,6 +12,7 @@ import stat
 import subprocess
 import threading
 import tkinter
+import tkinter.font
 
 from functools import partial
 
@@ -102,19 +103,21 @@ class GUI:
         self.window.grid_rowconfigure(0, weight=1)
         self.window.bind("r", lambda _: self.on_refresh())
 
-        self.video_list = tkinter.Listbox(self.window)
+        font = tkinter.font.Font(size=15)
+
+        self.video_list = tkinter.Listbox(self.window, font=font)
         self.video_list.grid(column=0, columnspan=3, row=0, sticky="nesw")
         self.video_list.bind("<Return>", lambda _: self.on_play())
         self.video_list.bind("<Delete>", lambda _: self.on_delete())
         self.video_list.focus_set()
 
-        self.play_button = tkinter.Button(self.window, text="Play", command=self.on_play)
+        self.play_button = tkinter.Button(self.window, text="Play", command=self.on_play, font=font)
         self.play_button.grid(column=0, row=1)
 
-        self.refresh_button = tkinter.Button(self.window, text="Refresh", command=self.on_refresh)
+        self.refresh_button = tkinter.Button(self.window, text="Refresh", command=self.on_refresh, font=font)
         self.refresh_button.grid(column=1, row=1)
 
-        self.delete_button = tkinter.Button(self.window, text="Delete", command=self.on_delete)
+        self.delete_button = tkinter.Button(self.window, text="Delete", command=self.on_delete, font=font)
         self.delete_button.grid(column=2, row=1)
 
         self.security_hash = None
