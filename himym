@@ -4,6 +4,7 @@
 #
 #   $ ssh-keygen -t rsa -b 4096 -m PEM
 
+import argparse
 import logging
 import os
 import paramiko
@@ -100,15 +101,17 @@ class GUI:
         self.window.grid_columnconfigure(0, weight=1)
         self.window.grid_columnconfigure(1, weight=1)
         self.window.grid_columnconfigure(2, weight=1)
+        self.window.grid_columnconfigure(3, weight=1)
         self.window.grid_rowconfigure(0, weight=1)
         self.window.bind("r", lambda _: self.on_refresh())
 
         font = tkinter.font.Font(size=15)
 
         self.video_list = tkinter.Listbox(self.window, font=font)
-        self.video_list.grid(column=0, columnspan=3, row=0, sticky="nesw")
+        self.video_list.grid(column=0, columnspan=4, row=0, sticky="nesw")
         self.video_list.bind("<Return>", lambda _: self.on_play())
         self.video_list.bind("<Delete>", lambda _: self.on_delete())
+        self.video_list.bind("d", lambda _: self.on_download())
         self.video_list.focus_set()
 
         self.play_button = tkinter.Button(self.window, text="Play", command=self.on_play, font=font)
@@ -117,8 +120,11 @@ class GUI:
         self.refresh_button = tkinter.Button(self.window, text="Refresh", command=self.on_refresh, font=font)
         self.refresh_button.grid(column=1, row=1)
 
+        self.download_button = tkinter.Button(self.window, text="Download", command=self.on_download, font=font)
+        self.download_button.grid(column=2, row=1)
+
         self.delete_button = tkinter.Button(self.window, text="Delete", command=self.on_delete, font=font)
-        self.delete_button.grid(column=2, row=1)
+        self.delete_button.grid(column=3, row=1)
 
         self.security_hash = None
 
@@ -226,6 +232,60 @@ class GUI:
 
             sftp_client.remove(path)
 
+    def on_download(self):
+        threading.Thread(target=self.download_videos).start()
+
+    def download_videos(self):
+        try:
+            self.lock.acquire()
+            if self.download_button["state"] not in ("active", "normal"):
+                return
+
+            self.download_button.configure(state="disabled")
+
+        finally:
+            self.lock.release()
+
+        try:
+            selection = self.video_list.curselection()
+
+            for item in selection:
+                relative_path = self.video_list.get(item)
+
+                self.download_video(relative_path)
+        finally:
+            self.download_button.configure(state="normal")
+
+    def download_video(self, relative_path):
+        log.info("Downloading {}".format(relative_path))
+
+        with self.SFTPClientWrapper(settings.HOST, settings.PORT, settings.USER) as sftp_client:
+            self.refresh_security_hash(sftp_client)
+
+            remote_paths = []
+            remote_paths.append(relative_path)
+
+            video_dir = os.path.join(settings.SFTP_PATH, self.security_hash, os.path.split(relative_path)[0])
+            #  video_dir = os.path.join(".", os.path.split(relative_path)[0])
+
+            log.info("Looking for subtitles in {}".format(video_dir))
+
+            for sub in filter(lambda x: self.is_valid_sub(x, relative_path), sftp_client.listdir(video_dir)):
+                log.info("Subtitles found {}".format(sub))
+                remote_paths.append(os.path.join(video_dir, sub))
+
+            for remote_path in remote_paths:
+                source_path = os.path.join(settings.SFTP_PATH, self.security_hash, remote_path)
+
+                target_filename = os.path.split(remote_path)[1]
+                target_path = os.path.join(os.environ["HOME"], "Videos", target_filename)
+
+                if os.path.exists(target_path):
+                    log.info("{} exists, skipping".format(target_filename))
+                else:
+                    log.info("Downloading {}".format(target_filename))
+                    sftp_client.get(source_path, target_path)
+
     def start(self):
         self.on_refresh()
         self.window.mainloop()
@@ -233,9 +293,32 @@ class GUI:
     def close(self):
         pass
 
-if __name__ == "__main__":
+    @staticmethod
+    def is_valid_sub(sub_path, video_path):
+        sub_name = os.path.split(sub_path)[1]
+        video_name = os.path.split(video_path)[1]
+        base_name = os.path.splitext(video_name)[0]
+        return sub_name.startswith(base_name) and sub_name.endswith(".srt")
+
+
+def main(cmd_list=False):
     gui = GUI()
-    try:
-        gui.start()
-    finally:
-        gui.close()
+
+    if cmd_list:
+        with gui.SFTPClientWrapper(settings.HOST, settings.PORT, settings.USER) as sftp_client:
+            gui.refresh_security_hash(sftp_client)
+            for item in gui.get_videos(sftp_client):
+                url = os.path.join(settings.BASE_URL, gui.security_hash, item.relative_path)
+                print(url)
+    else:
+        try:
+            gui.start()
+        finally:
+            gui.close()
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-l", "--list", action="store_true", dest="cmd_list")
+    args = parser.parse_args()
+    main(**vars(args))
